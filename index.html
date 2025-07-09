@@ -156,6 +156,15 @@
             margin: 10px 0;
         }
 
+        .warning {
+            color: #856404;
+            padding: 10px;
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+
         @media (max-width: 600px) {
             .container {
                 padding: 15px;
@@ -276,10 +285,34 @@
                     this.showProcessing(true);
                     this.showPreview(file);
 
-                    const exifData = await this.extractExifData(file);
+                    console.log('Processing file:', file.name, 'Size:', file.size, 'Type:', file.type);
+
+                    // Check file size (limit to 10MB)
+                    if (file.size > 10 * 1024 * 1024) {
+                        throw new Error('File size too large. Please use an image smaller than 10MB.');
+                    }
+
+                    // Extract EXIF data with better error handling
+                    let exifData = {};
+                    try {
+                        exifData = await this.extractExifData(file);
+                        console.log('EXIF data extracted:', exifData);
+                    } catch (exifError) {
+                        console.warn('EXIF extraction failed:', exifError);
+                        this.showMessage('Warning: Could not extract photo timestamp. Using current time.', 'warning');
+                    }
+                    
                     const timestamp = this.getTimestamp(exifData);
                     
-                    const temperatures = await this.extractTemperatures(file);
+                    // Extract temperatures with better error handling
+                    let temperatures = { fridge: null, freezer: null };
+                    try {
+                        temperatures = await this.extractTemperatures(file);
+                        console.log('Temperatures extracted:', temperatures);
+                    } catch (ocrError) {
+                        console.warn('OCR failed:', ocrError);
+                        this.showMessage('Warning: Could not read temperature from image. Please enter manually.', 'warning');
+                    }
                     
                     const reading = {
                         id: Date.now(),
@@ -331,46 +364,105 @@
             }
 
             async extractExifData(file) {
-                return new Promise((resolve) => {
-                    EXIF.getData(file, function() {
-                        resolve(EXIF.getAllTags(this));
-                    });
+                return new Promise((resolve, reject) => {
+                    try {
+                        EXIF.getData(file, function() {
+                            const tags = EXIF.getAllTags(this);
+                            resolve(tags || {});
+                        });
+                    } catch (error) {
+                        reject(error);
+                    }
                 });
             }
 
             getTimestamp(exifData) {
-                if (exifData.DateTime) {
-                    const dateStr = exifData.DateTime.replace(/:/g, '-').replace(' ', 'T');
-                    return new Date(dateStr).toISOString();
+                try {
+                    // Try multiple EXIF date fields
+                    const dateFields = ['DateTime', 'DateTimeOriginal', 'DateTimeDigitized'];
+                    
+                    for (const field of dateFields) {
+                        if (exifData[field]) {
+                            // EXIF format: "2023:12:25 14:30:45"
+                            const dateStr = exifData[field].replace(/^(\d{4}):(\d{2}):(\d{2}) /, '$1-$2-$3T');
+                            const date = new Date(dateStr);
+                            if (!isNaN(date.getTime())) {
+                                console.log('Using EXIF timestamp:', dateStr);
+                                return date.toISOString();
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Error parsing EXIF timestamp:', error);
                 }
+                
+                console.log('Using current timestamp');
                 return new Date().toISOString();
             }
 
             async extractTemperatures(file) {
-                const worker = await Tesseract.createWorker();
+                let worker;
                 
                 try {
-                    const { data: { text } } = await worker.recognize(file);
+                    console.log('Initializing OCR worker...');
+                    worker = await Tesseract.createWorker();
+                    
+                    console.log('Recognizing text from image...');
+                    const { data: { text } } = await worker.recognize(file, 'eng');
+                    
+                    console.log('OCR result:', text);
                     
                     const temperatures = this.parseTemperatures(text);
+                    console.log('Parsed temperatures:', temperatures);
+                    
                     return temperatures;
+                } catch (error) {
+                    console.error('OCR processing failed:', error);
+                    throw new Error('Failed to read temperature from image: ' + error.message);
                 } finally {
-                    await worker.terminate();
+                    if (worker) {
+                        try {
+                            await worker.terminate();
+                        } catch (terminateError) {
+                            console.warn('Error terminating OCR worker:', terminateError);
+                        }
+                    }
                 }
             }
 
             parseTemperatures(text) {
-                const tempRegex = /(-?\d+\.?\d*)\s*[°]?[CF]/gi;
-                const matches = text.match(tempRegex) || [];
+                console.log('Parsing temperatures from text:', text);
                 
-                const numbers = matches.map(match => {
-                    const num = parseFloat(match.replace(/[°CF]/gi, ''));
-                    return isNaN(num) ? null : num;
-                }).filter(num => num !== null);
-
+                // Multiple regex patterns to catch different temperature formats
+                const patterns = [
+                    /(-?\d+\.?\d*)\s*[°]?[CF]/gi,  // 35°F, 35F, 35 F
+                    /(-?\d+\.?\d*)\s*degrees?/gi,   // 35 degrees
+                    /(-?\d+\.?\d*)\s*deg/gi,        // 35 deg
+                    /(-?\d+\.?\d*)\s*[°]/gi,        // 35°
+                    /(-?\d+\.?\d*)/g                // Just numbers
+                ];
+                
+                let allNumbers = [];
+                
+                for (const pattern of patterns) {
+                    const matches = text.match(pattern) || [];
+                    const numbers = matches.map(match => {
+                        const num = parseFloat(match.replace(/[°CFdegrees\s]/gi, ''));
+                        return isNaN(num) ? null : num;
+                    }).filter(num => num !== null && num >= -20 && num <= 100); // Reasonable temperature range
+                    
+                    allNumbers = allNumbers.concat(numbers);
+                }
+                
+                // Remove duplicates and sort
+                const uniqueNumbers = [...new Set(allNumbers)].sort((a, b) => b - a);
+                
+                console.log('Found temperature numbers:', uniqueNumbers);
+                
+                // Typically fridge temp is higher than freezer temp
                 return {
-                    fridge: numbers[0] || null,
-                    freezer: numbers[1] || null
+                    fridge: uniqueNumbers[0] || null,
+                    freezer: uniqueNumbers[1] || null
                 };
             }
 
