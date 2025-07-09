@@ -187,12 +187,17 @@
 </head>
 <body>
     <div class="container">
-        <h1>🌡️ Fridge Temperature Monitor</h1>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h1 style="margin: 0;">🌡️ Fridge Temperature Monitor</h1>
+            <button onclick="monitor.toggleDebug()" style="padding: 6px 12px; font-size: 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                🔧 Debug
+            </button>
+        </div>
         
         <div class="debug-info" id="debugInfo" style="display: none;">
             <div style="background: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-size: 12px; border: 1px solid #dee2e6;">
                 <strong>Debug Mode</strong> | 
-                Version: <span id="versionNumber">1.3.1</span> | 
+                Version: <span id="versionNumber">1.3.2</span> | 
                 Build: <span id="buildTime"></span>
                 <button onclick="monitor.forceRefresh()" style="margin-left: 10px; padding: 2px 8px; font-size: 11px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;">🔄 Force Refresh</button>
                 <button onclick="monitor.toggleDebug()" style="margin-left: 5px; padding: 2px 8px; font-size: 11px; background: #666; color: white; border: none; border-radius: 3px; cursor: pointer;">Hide Debug</button>
@@ -266,7 +271,7 @@
                 this.chart = null;
                 this.currentFile = null;
                 this.currentTimestamp = null;
-                this.version = '1.3.1';
+                this.version = '1.3.2';
                 this.buildTime = new Date().toISOString();
                 this.initializeEventListeners();
                 this.renderTable();
