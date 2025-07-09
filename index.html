@@ -206,6 +206,25 @@
             <p>Processing image...</p>
         </div>
 
+        <div class="manual-input" id="manualInput" style="display: none;">
+            <h3>Manual Temperature Entry</h3>
+            <p>OCR couldn't read the temperature. Please enter manually:</p>
+            <div style="display: flex; gap: 15px; margin: 15px 0; flex-wrap: wrap;">
+                <div>
+                    <label for="fridgeTemp">Fridge Temp (°F):</label>
+                    <input type="number" id="fridgeTemp" step="0.1" style="width: 80px; padding: 5px; margin-left: 5px;">
+                </div>
+                <div>
+                    <label for="freezerTemp">Freezer Temp (°F):</label>
+                    <input type="number" id="freezerTemp" step="0.1" style="width: 80px; padding: 5px; margin-left: 5px;">
+                </div>
+            </div>
+            <div style="margin-top: 15px;">
+                <button onclick="monitor.saveManualReading()" style="background: #007AFF; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin-right: 10px; cursor: pointer;">Save Reading</button>
+                <button onclick="monitor.cancelManualInput()" style="background: #666; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">Cancel</button>
+            </div>
+        </div>
+
         <div class="results-section">
             <h2>Temperature Readings</h2>
             <table class="data-table" id="dataTable">
@@ -235,6 +254,8 @@
             constructor() {
                 this.data = this.loadData();
                 this.chart = null;
+                this.currentFile = null;
+                this.currentTimestamp = null;
                 this.initializeEventListeners();
                 this.renderTable();
                 this.renderChart();
@@ -312,18 +333,34 @@
                     } catch (ocrError) {
                         console.warn('OCR failed:', ocrError);
                         this.showMessage('Warning: Could not read temperature from image. Please enter manually.', 'warning');
+                        
+                        // Store file info for manual input
+                        this.currentFile = file;
+                        this.currentTimestamp = timestamp;
+                        this.showManualInput();
+                        return;
                     }
                     
-                    const reading = {
-                        id: Date.now(),
-                        timestamp: timestamp,
-                        fridgeTemp: temperatures.fridge,
-                        freezerTemp: temperatures.freezer,
-                        filename: file.name
-                    };
+                    // Only add reading if OCR was successful
+                    if (temperatures.fridge !== null || temperatures.freezer !== null) {
+                        const reading = {
+                            id: Date.now(),
+                            timestamp: timestamp,
+                            fridgeTemp: temperatures.fridge,
+                            freezerTemp: temperatures.freezer,
+                            filename: file.name
+                        };
 
-                    this.addReading(reading);
-                    this.showMessage('Temperature reading added successfully!', 'success');
+                        this.addReading(reading);
+                        this.showMessage('Temperature reading added successfully!', 'success');
+                    } else {
+                        this.showMessage('Warning: Could not read temperature from image. Please enter manually.', 'warning');
+                        
+                        // Store file info for manual input
+                        this.currentFile = file;
+                        this.currentTimestamp = timestamp;
+                        this.showManualInput();
+                    }
                     
                 } catch (error) {
                     console.error('Error processing image:', error);
@@ -406,6 +443,12 @@
                 try {
                     console.log('Initializing OCR worker...');
                     worker = await Tesseract.createWorker();
+                    
+                    // Configure OCR for better digit recognition
+                    await worker.setParameters({
+                        tessedit_char_whitelist: '0123456789.-°FCfreezer ',
+                        tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK
+                    });
                     
                     console.log('Recognizing text from image...');
                     const { data: { text } } = await worker.recognize(file, 'eng');
@@ -566,6 +609,49 @@
                         }
                     }
                 });
+            }
+
+            showManualInput() {
+                document.getElementById('manualInput').style.display = 'block';
+                document.getElementById('fridgeTemp').focus();
+            }
+
+            hideManualInput() {
+                document.getElementById('manualInput').style.display = 'none';
+                document.getElementById('fridgeTemp').value = '';
+                document.getElementById('freezerTemp').value = '';
+            }
+
+            saveManualReading() {
+                const fridgeTemp = parseFloat(document.getElementById('fridgeTemp').value) || null;
+                const freezerTemp = parseFloat(document.getElementById('freezerTemp').value) || null;
+                
+                if (fridgeTemp === null && freezerTemp === null) {
+                    this.showMessage('Please enter at least one temperature value.', 'error');
+                    return;
+                }
+                
+                const reading = {
+                    id: Date.now(),
+                    timestamp: this.currentTimestamp,
+                    fridgeTemp: fridgeTemp,
+                    freezerTemp: freezerTemp,
+                    filename: this.currentFile ? this.currentFile.name : 'Manual entry'
+                };
+
+                this.addReading(reading);
+                this.hideManualInput();
+                this.showMessage('Temperature reading added successfully!', 'success');
+                
+                // Clear stored data
+                this.currentFile = null;
+                this.currentTimestamp = null;
+            }
+
+            cancelManualInput() {
+                this.hideManualInput();
+                this.currentFile = null;
+                this.currentTimestamp = null;
             }
 
             loadData() {
